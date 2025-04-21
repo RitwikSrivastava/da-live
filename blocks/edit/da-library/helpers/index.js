@@ -45,14 +45,16 @@ function getBlockTableHtml(block) {
     row.children.length > cols ? row.children.length : cols), 0);
   const table = document.createElement('table');
   table.setAttribute('border', 1);
+  
+  // Header row
   const headerRow = document.createElement('tr');
-
   const th = document.createElement('td');
   th.setAttribute('colspan', maxCols);
   th.textContent = variants ? `${name} (${variants})` : name;
-
   headerRow.append(th);
   table.append(headerRow);
+
+  // Block content rows
   rows.forEach((row) => {
     const tr = document.createElement('tr');
     [...row.children].forEach((col) => {
@@ -65,6 +67,7 @@ function getBlockTableHtml(block) {
     });
     table.append(tr);
   });
+
   return table;
 }
 
@@ -80,13 +83,14 @@ async function fetchAndParseHtml(path, isAemHosted) {
 
 function getSectionsAndBlocks(doc) {
   const sections = [...doc.querySelectorAll('body > div, main > div')];
-  return sections.reduce((acc, section) => {
+  const blocks = sections.reduce((acc, section) => {
     const sectionEl = document.createElement('hr');
     sectionEl.dataset.issection = true;
     acc.push(sectionEl);
     acc.push(...section.querySelectorAll(':scope > *'));
     return acc;
   }, []);
+  return blocks;
 }
 
 function processGroupBlock(block) {
@@ -113,10 +117,24 @@ function createGroup(block) {
 }
 
 function groupBlocks(blocks) {
-  return blocks.reduce((state, block) => {
-    if (block.classList.contains('library-container-start')) {
+  return blocks.reduce((state, block, index) => {
+    // Check if this is a section-metadata
+    if (block.classList?.contains('section-metadata')) {
+      const prevBlock = blocks[index - 1];
+      // Check if previous block is a heading or has issection
+      const isStandalone = !prevBlock || 
+                          prevBlock.dataset?.issection || 
+                          isHeading(prevBlock);
+      if (isStandalone) {
+        // If standalone, include it as a separate block
+        state.blocks.push(block);
+      }
+      return state;
+    }
+
+    if (block.classList?.contains('library-container-start')) {
       state.currentGroup = createGroup(block);
-    } else if (block.classList.contains('library-container-end') && state.currentGroup) {
+    } else if (block.classList?.contains('library-container-end') && state.currentGroup) {
       const { container, blockGroup } = state.currentGroup;
       container.appendChild(blockGroup);
       state.blocks.push(blockGroup);
@@ -138,11 +156,45 @@ function transformBlock(block) {
     ? { name: prevSib.textContent }
     : getBlockName(block.className);
 
-  const dom = block.dataset.isgroup
+  // Create a container for block and metadata as separate tables
+  const container = document.createElement('div');
+  
+  // Add the block table
+  const blockTable = block.dataset.isgroup
     ? processGroupBlock(block)
     : getBlockTableHtml(block);
+  container.appendChild(blockTable);
 
-  item.parsed = parseDom(dom);
+  // Check for section-metadata and add as separate table
+  const nextSibling = block.nextElementSibling;
+  if (nextSibling?.classList.contains('section-metadata')) {
+    const metadataTable = document.createElement('table');
+    metadataTable.setAttribute('border', 1);
+    
+    // Add metadata header
+    const headerRow = document.createElement('tr');
+    const headerCell = document.createElement('td');
+    headerCell.setAttribute('colspan', '2');
+    headerCell.textContent = 'section-metadata';
+    headerRow.appendChild(headerCell);
+    metadataTable.appendChild(headerRow);
+    
+    // Add metadata content
+    const rows = [...nextSibling.children];
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      [...row.children].forEach((cell) => {
+        const td = document.createElement('td');
+        td.innerHTML = cell.innerHTML;
+        tr.appendChild(td);
+      });
+      metadataTable.appendChild(tr);
+    });
+    
+    container.appendChild(metadataTable);
+  }
+
+  item.parsed = parseDom(container);
 
   if (block.nextElementSibling?.classList.contains('library-metadata')) {
     const md = getMetadata(block.nextElementSibling);
